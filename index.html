@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Emoji Bike Game</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        canvas {
+            background-color: #70c5ce;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        let laneWidth, laneHeight;
+        const numLanes = 5;
+        const numRows = 5;
+
+        const player = {
+            x: 2, // 0-4 for lanes
+            y: 2, // 0-4 for rows
+            emoji: '🚲',
+            size: 40,
+            invulnerable: false,
+            invulnerabilityTime: 1000, // 1 second
+            lastHitTime: 0
+        };
+
+        let touchStartX = 0;
+        let touchStartY = 0;
+        let touchEndX = 0;
+        let touchEndY = 0;
+
+        function resizeCanvas() {
+            canvas.width = Math.min(window.innerWidth, window.innerHeight * 0.7);
+            canvas.height = window.innerHeight * 0.9;
+            laneWidth = canvas.width / numLanes;
+            laneHeight = canvas.height / numRows;
+            player.size = Math.max(20, laneWidth * 0.6); // Ensure a minimum size and base it on laneWidth
+            draw();
+        }
+
+        let gameState = 'playing'; // playing, gameOver
+        let score = 0;
+        let startTime = Date.now();
+        let health = 3;
+
+        let backgroundSpeed = 2;
+        let roadOffset = 0;
+
+        function checkCollisions() {
+            if (player.invulnerable) return;
+
+            const playerX = player.x * laneWidth + laneWidth / 2;
+            const playerY = player.y * laneHeight + laneHeight / 2;
+
+            for (const enemy of enemies) {
+                const dx = playerX - enemy.x;
+                const dy = playerY - enemy.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < (player.size + enemy.size) / 2) {
+                    health--;
+                    player.invulnerable = true;
+                    player.lastHitTime = Date.now();
+                    if (health <= 0) {
+                        gameState = 'gameOver';
+                    }
+                    break;
+                }
+            }
+        }
+
+        function drawUI() {
+            ctx.fillStyle = 'white';
+            ctx.font = '30px Arial';
+            ctx.textAlign = 'left';
+            // Score
+            score = Math.floor((Date.now() - startTime) / 100);
+            ctx.fillText(`Score: ${score}`, 20, 40);
+
+            // Health
+            let hearts = '';
+            for (let i = 0; i < health; i++) {
+                hearts += '❤️';
+            }
+            ctx.font = '40px Arial';
+            ctx.textAlign = 'right';
+            ctx.fillText(hearts, canvas.width - 20, 40);
+        }
+
+        function drawGameOver() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = 'white';
+            ctx.font = '60px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('Game Over', canvas.width / 2, canvas.height / 3);
+
+            ctx.font = '40px Arial';
+            ctx.fillText(`Final Score: ${score}`, canvas.width / 2, canvas.height / 2);
+
+            // Restart button
+            ctx.fillStyle = '#4CAF50';
+            ctx.fillRect(canvas.width / 2 - 100, canvas.height * 0.6, 200, 50);
+            ctx.fillStyle = 'white';
+            ctx.font = '30px Arial';
+            ctx.fillText('Restart', canvas.width / 2, canvas.height * 0.6 + 35);
+        }
+
+        function resetGame() {
+            player.x = 2;
+            player.y = 2;
+            health = 3;
+            score = 0;
+            enemies = [];
+            startTime = Date.now();
+            gameState = 'playing';
+        }
+
+        function handleMouseClick(e) {
+            if (gameState !== 'gameOver') return;
+
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            // Check if click is within restart button bounds
+            if (x > canvas.width / 2 - 100 && x < canvas.width / 2 + 100 &&
+                y > canvas.height * 0.6 && y < canvas.height * 0.6 + 50) {
+                resetGame();
+            }
+        }
+
+        function drawBackground() {
+            // Grass
+            ctx.fillStyle = '#8bc34a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Road
+            const roadWidth = laneWidth * (numLanes -1);
+            const roadX = laneWidth / 2;
+            ctx.fillStyle = '#616161';
+            ctx.fillRect(roadX, 0, roadWidth, canvas.height);
+
+            // Lane markers
+            ctx.strokeStyle = '#ffeb3b';
+            ctx.lineWidth = 5;
+            ctx.setLineDash([20, 20]);
+            roadOffset = (roadOffset + backgroundSpeed) % 40;
+            ctx.lineDashOffset = -roadOffset;
+
+            for (let i = 0; i < numLanes; i++) {
+                const x = roadX + i * laneWidth + laneWidth / 2;
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+        }
+
+        const enemyTypes = ['🚗', '🚕', '🚚', '🧟', '🚧'];
+        let enemies = [];
+        let enemySpawnRate = 2000; // ms
+        let lastEnemySpawn = 0;
+
+        function spawnEnemy() {
+            const time = Date.now();
+            if (time - lastEnemySpawn < enemySpawnRate) {
+                return;
+            }
+            lastEnemySpawn = time;
+
+            const emoji = enemyTypes[Math.floor(Math.random() * enemyTypes.length)];
+            const size = player.size * (1 + Math.random() * 0.5);
+            const type = Math.floor(Math.random() * 4); // 0: T->B, 1: B->T, 2: L->R, 3: R->L
+            const enemy = { emoji, size, type };
+
+            switch (type) {
+                case 0: // Top to Bottom
+                    enemy.x = Math.floor(Math.random() * numLanes) * laneWidth + laneWidth / 2;
+                    enemy.y = -size;
+                    enemy.speed = 2 + Math.random() * 2;
+                    break;
+                case 1: // Bottom to Top
+                    enemy.x = Math.floor(Math.random() * numLanes) * laneWidth + laneWidth / 2;
+                    enemy.y = canvas.height + size;
+                    enemy.speed = -(2 + Math.random() * 2);
+                    break;
+                case 2: // Left to Right
+                    enemy.y = Math.floor(Math.random() * numRows) * laneHeight + laneHeight / 2;
+                    enemy.x = -size;
+                    enemy.speed = 2 + Math.random() * 2;
+                    break;
+                case 3: // Right to Left
+                    enemy.y = Math.floor(Math.random() * numRows) * laneHeight + laneHeight / 2;
+                    enemy.x = canvas.width + size;
+                    enemy.speed = -(2 + Math.random() * 2);
+                    break;
+            }
+            enemies.push(enemy);
+        }
+
+        function updateEnemies() {
+            enemies.forEach(enemy => {
+                if (enemy.type === 0 || enemy.type === 1) { // Vertical
+                    enemy.y += enemy.speed;
+                } else { // Horizontal
+                    enemy.x += enemy.speed;
+                }
+            });
+
+            // Remove enemies that are off-screen
+            enemies = enemies.filter(enemy => {
+                return enemy.x > -enemy.size && enemy.x < canvas.width + enemy.size &&
+                       enemy.y > -enemy.size && enemy.y < canvas.height + enemy.size;
+            });
+        }
+
+        function drawEnemies() {
+            enemies.forEach(enemy => {
+                ctx.font = `${enemy.size}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(enemy.emoji, enemy.x, enemy.y);
+            });
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawBackground();
+            drawEnemies();
+            drawPlayer();
+            drawUI();
+
+            if (gameState === 'gameOver') {
+                drawGameOver();
+            }
+        }
+
+        function drawPlayer() {
+            const xPos = player.x * laneWidth + laneWidth / 2;
+            const yPos = player.y * laneHeight + laneHeight / 2;
+
+            if (player.invulnerable) {
+                const time = Date.now();
+                if (time - player.lastHitTime > player.invulnerabilityTime) {
+                    player.invulnerable = false;
+                } else {
+                    if (Math.floor((time - player.lastHitTime) / 100) % 2 === 0) {
+                        return;
+                    }
+                }
+            }
+
+            try {
+                ctx.font = `${player.size}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(player.emoji, xPos, yPos);
+            } catch (e) {
+                // Fallback for environments that don't support emoji rendering
+                ctx.fillStyle = 'blue';
+                ctx.beginPath();
+                ctx.arc(xPos, yPos, player.size / 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        function handleKeyDown(e) {
+            switch (e.key) {
+                case 'ArrowUp':
+                case 'w':
+                    player.y = Math.max(0, player.y - 1);
+                    break;
+                case 'ArrowDown':
+                case 's':
+                    player.y = Math.min(numRows - 1, player.y + 1);
+                    break;
+                case 'ArrowLeft':
+                case 'a':
+                    player.x = Math.max(0, player.x - 1);
+                    break;
+                case 'ArrowRight':
+                case 'd':
+                    player.x = Math.min(numLanes - 1, player.x + 1);
+                    break;
+            }
+        }
+
+        function handleTouchStart(e) {
+            touchStartX = e.changedTouches[0].screenX;
+            touchStartY = e.changedTouches[0].screenY;
+        }
+
+        function handleTouchEnd(e) {
+            touchEndX = e.changedTouches[0].screenX;
+            touchEndY = e.changedTouches[0].screenY;
+
+            if (gameState === 'gameOver') {
+                const rect = canvas.getBoundingClientRect();
+                const x = touchEndX - rect.left;
+                const y = touchEndY - rect.top;
+
+                if (x > canvas.width / 2 - 100 && x < canvas.width / 2 + 100 &&
+                    y > canvas.height * 0.6 && y < canvas.height * 0.6 + 50) {
+                    resetGame();
+                    return; // Don't also trigger a swipe
+                }
+            }
+            handleSwipe();
+        }
+
+        function handleSwipe() {
+            const swipeX = touchEndX - touchStartX;
+            const swipeY = touchEndY - touchStartY;
+            const threshold = 50; // min distance for a swipe
+
+            if (Math.abs(swipeX) > Math.abs(swipeY)) { // Horizontal swipe
+                if (Math.abs(swipeX) > threshold) {
+                    if (swipeX > 0) {
+                        player.x = Math.min(numLanes - 1, player.x + 1);
+                    } else {
+                        player.x = Math.max(0, player.x - 1);
+                    }
+                }
+            } else { // Vertical swipe
+                if (Math.abs(swipeY) > threshold) {
+                    if (swipeY > 0) {
+                        player.y = Math.min(numRows - 1, player.y + 1);
+                    } else {
+                        player.y = Math.max(0, player.y - 1);
+                    }
+                }
+            }
+        }
+
+        let audioCtx;
+        let audioInitialized = false;
+
+        function playMusic() {
+            if (!audioCtx) return;
+
+            const melody = [
+                { note: 'C4', duration: 0.2 }, { note: 'D4', duration: 0.2 },
+                { note: 'E4', duration: 0.2 }, { note: 'C4', duration: 0.2 },
+                { note: 'E4', duration: 0.2 }, { note: 'D4', duration: 0.2 },
+                { note: 'C4', duration: 0.4 },
+            ];
+
+            let currentTime = audioCtx.currentTime;
+
+            function getFrequency(note) {
+                const notes = { 'C4': 261.6, 'D4': 293.7, 'E4': 329.6 };
+                return notes[note] || 440;
+            }
+
+            melody.forEach(note => {
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+
+                oscillator.frequency.value = getFrequency(note.note);
+                gainNode.gain.setValueAtTime(0.1, currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.00001, currentTime + note.duration);
+
+                oscillator.start(currentTime);
+                oscillator.stop(currentTime + note.duration);
+
+                currentTime += note.duration;
+            });
+
+            setTimeout(playMusic, currentTime * 1000 - audioCtx.currentTime * 1000 + 200);
+        }
+
+        function initAudio() {
+            if (audioInitialized) return;
+            audioInitialized = true;
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            playMusic();
+        }
+
+        let gameTime = 0;
+
+        function gameLoop() {
+            if (gameState === 'playing') {
+                gameTime++;
+                // Every ~16 seconds at 60fps, increase difficulty
+                if (gameTime > 0 && gameTime % 1000 === 0) {
+                    backgroundSpeed += 0.2; // Linear speed increase
+                    enemySpawnRate = Math.max(500, enemySpawnRate * 0.9); // Exponential spawn rate increase
+                }
+                updateEnemies();
+                checkCollisions();
+                spawnEnemy();
+            }
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        window.addEventListener('keydown', (e) => {
+            initAudio();
+            handleKeyDown(e);
+        });
+        canvas.addEventListener('touchstart', (e) => {
+            initAudio();
+            handleTouchStart(e);
+        }, { passive: false });
+        canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
+        canvas.addEventListener('click', (e) => {
+            initAudio();
+            handleMouseClick(e)
+        });
+
+        resizeCanvas();
+        gameLoop();
+    </script>
+</body>
+</html>
